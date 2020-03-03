@@ -54,12 +54,12 @@ class CIFARModelDepthDilate(nn.Module):
             nn.Dropout(self.dropout_val))
 
         self.conv3 = nn.Sequential(
-            nn.Conv2d(self.layer1_channels*2, self.layer1_channels*4, 3, padding=1, stride=1,bias=self.bias,dilation=2), #Input: (64,8,8)|Output (128,8,8)|RF=32,
+            nn.Conv2d(self.layer1_channels*2, self.layer1_channels*4, 3, padding=2, stride=1,bias=self.bias,dilation=2), #Input: (64,8,8)|Output (128,8,8)|RF=32,
             #nn.Conv2d(self.layer1_channels*2,self.layer1_channels*4,1,1,0,1,1,bias=self.bias),       
             nn.BatchNorm2d(self.layer1_channels*4),
             nn.ReLU(),
             nn.Dropout(self.dropout_val),
-            nn.Conv2d(self.layer1_channels*4, self.layer1_channels*4, 3, padding=1, stride=1,bias=self.bias, groups=self.layer1_channels*4, dilation=2),
+            nn.Conv2d(self.layer1_channels*4, self.layer1_channels*4, 3, padding=2, stride=1,bias=self.bias, groups=self.layer1_channels*4, dilation=2),
             nn.Conv2d(self.layer1_channels*4, self.layer1_channels*4,1,1,0,1,1,bias=self.bias),#Input: (128,8,8)|Output (128,8,8)|RF=48
             nn.BatchNorm2d(self.layer1_channels*4),
             nn.ReLU(),
