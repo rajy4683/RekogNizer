@@ -5,8 +5,8 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import StepLR, OneCycleLR, MultiStepLR
 from RekogNizer.fileutils import *
 import wandb
-
 from tqdm import tqdm
+from torchsummary import summary
 
 
 def model_builder(model_class=None, weights_path=None, local_device=torch.device("cpu")):
@@ -22,6 +22,25 @@ def model_builder(model_class=None, weights_path=None, local_device=torch.device
     except:
         print("Some execption occured during loading the model")
     return local_model.to(local_device)
+
+def model_builder2(model_class=None, weights_path=None, local_device=torch.device("cpu")):
+    best_acc=0.0
+    if (model_class == None):
+        print("Please provide the model object to be used")
+        return
+    local_model = model_class#.to(local_device)
+    try:
+        if (weights_path != None):
+            checkpoint = torch.load(weights_path)
+            best_acc = checkpoint['test_acc']
+            local_model.load_state_dict(checkpoint['model_state_dict'])
+            
+                #torch.load(weights_path, map_location=local_device))           
+    except:
+        print("Some execption occured during loading the model")
+    return local_model.to(local_device),best_acc
+
+
 
 def classwise_accuracy(model, image_loader, classes, device=torch.device("cpu")):
     
@@ -105,7 +124,8 @@ def execute_model(model_class, hyperparams,
                   train_loader, test_loader, device, classes,
                   optimizer_in=optim.SGD,
                   criterion=nn.CrossEntropyLoss,
-                  scheduler=None,prev_saved_model=None,**kwargs):
+                  scheduler=None,prev_saved_model=None,
+                  save_best=False,**kwargs):
     hyperparams['run_name'] = rand_run_name()
     wandb.init(config=hyperparams, project=hyperparams['project'])
     
@@ -116,6 +136,7 @@ def execute_model(model_class, hyperparams,
     print("Hyper Params:")
     print(config)
     use_cuda = not config.no_cuda and torch.cuda.is_available()
+    best_acc = 0.0
     #device = torch.device("cuda" if use_cuda else "cpu")
     kwargs = {'num_workers': 4, 'pin_memory': True} if use_cuda else {}
     
@@ -138,16 +159,18 @@ def execute_model(model_class, hyperparams,
 
     # Initialize our model, recursively go over all modules and convert their parameters and buffers to CUDA tensors (if device is set to cuda)
     if(prev_saved_model != None):
-        model = model_builder(model_class, 
-                              weights_path=prev_saved_model,    
-                              local_device=device)
+        # model = model_builder(model_class, 
+        #                       weights_path=prev_saved_model,    
+        #                       local_device=device)
+        model,best_acc = model_builder2(model_class, 
+                      weights_path=prev_saved_model,    
+                      local_device=device)
+        print("Model loaded from ", prev_saved_model, " with previous accuracy:",best_acc)
     else:
-        model = model_class(config.dropout).to(device)
+        #model = model_class(config.dropout).to(device)
+        model = model_class.to(device)
     
-    #model = MNISTDigitBuilder(dropout=config.dropout).to(device)
-    
-    #model.load_state_dict(torch.load(prev_saved_model, map_location=device))
-
+    summary(model.to(device),input_size=(3, 32, 32))
     optimizer = optimizer_in(model.parameters(), lr=config.lr,
                           momentum=config.momentum, weight_decay=config.weight_decay)
     
@@ -181,15 +204,26 @@ def execute_model(model_class, hyperparams,
                    "Test Loss": epoch_test_loss,
                    "Learning Rate": config.lr})
                    #"Learning Rate": scheduler.get_lr()})
+        
+        if(save_best == True and epoch_test_acc > best_acc):
+            print("Model saved as Test Accuracy increased from ", best_acc, " to ", epoch_test_acc)
+            torch.save({
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'test_acc':epoch_test_acc,
+                'epoch':epoch
+                }, model_path)
+            best_acc = epoch_test_acc
+
         #if (epoch > config.start_lr):
         #    scheduler.step()
         
     # WandB â€“ Save the model checkpoint. This automatically saves a file to the cloud and associates it with the current run.
 
-    torch.save({
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict()
-            }, model_path)
-    print("Final model save path:",model_path)
+    # torch.save({
+    #         'model_state_dict': model.state_dict(),
+    #         'optimizer_state_dict': optimizer.state_dict()
+    #         }, model_path)
+    print("Final model save path:",model_path," best Accuracy:",best_acc)
     wandb.save('model.h5')
     return model_path
