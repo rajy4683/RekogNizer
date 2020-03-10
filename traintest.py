@@ -2,7 +2,7 @@ import torch
 import torch.optim as optim
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim.lr_scheduler import StepLR, OneCycleLR, MultiStepLR
+from torch.optim.lr_scheduler import StepLR, OneCycleLR, MultiStepLR, CyclicLR
 from RekogNizer.fileutils import *
 import wandb
 from tqdm import tqdm
@@ -65,6 +65,44 @@ def classwise_accuracy(model, image_loader, classes, device=torch.device("cpu"))
         class_acc_map[classes[i]]=class_accuracy
     
     return class_acc_map
+
+"""
+    This function can be used for CyclicLR based training
+"""
+def train_cyclic_lr(args, model, device, 
+          train_loader, optimizer, scheduler, criterion,
+          epoch_number,l1_loss=False, l1_beta = 0):
+    model.train()
+    pbar = tqdm(train_loader)
+    train_loss = 0
+    train_accuracy = 0
+    #scheduler = CyclicLR(optimizer, base_lr=1e-3, max_lr=0.1, mode='triangular', gamma=1., scale_fn='triangular',step_size_up=200)
+    for batch_idx, (data, target) in enumerate(pbar):
+        data, target = data.to(device), target.to(device)
+        optimizer.zero_grad()
+        output = model(data)
+        pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+        train_accuracy += pred.eq(target.view_as(pred)).sum().item()
+
+        loss = criterion(output, target)#F.nll_loss(output, target)
+        if l1_loss == True:
+            l1_crit = nn.L1Loss(size_average=False)
+            reg_loss = 0
+            for param in model.parameters():
+                target = torch.zeros_like(param)    
+                reg_loss += l1_crit(param, target)
+            loss += (l1_beta * reg_loss)
+        loss.backward()
+        optimizer.step()
+        scheduler.step()
+
+        pbar.set_description(desc= f'loss={loss.item()} batch_id={batch_idx}')
+        train_loss += loss.item()
+    
+    train_accuracy = (100. * train_accuracy) / len(train_loader.dataset)
+    train_loss /= len(train_loader.dataset)
+    return train_accuracy, train_loss
+
         
 
 
@@ -146,17 +184,6 @@ def execute_model(model_class, hyperparams,
     # numpy.random.seed(config.seed) # numpy random seed
     torch.backends.cudnn.deterministic = True
 
-    # Load the dataset: We're training our CNN on CIFAR10 (https://www.cs.toronto.edu/~kriz/cifar.html)
-    # First we define the tranformations to apply to our images
-    #kwargs = {'num_workers': 4, 'pin_memory': True} if use_cuda else {}
-    # train_loader = torch.utils.data.DataLoader(
-    #     datasets.MNIST('../data', train=True, download=True,
-    #                     transform=train_transforms),
-    #     batch_size=config.batch_size, shuffle=True, **kwargs)
-    # train_loader = torch.utils.data.DataLoader(
-    #     datasets.MNIST('../data', train=False, transform=test_transforms),
-    #     batch_size=config.batch_size, shuffle=True, **kwargs)
-
     # Initialize our model, recursively go over all modules and convert their parameters and buffers to CUDA tensors (if device is set to cuda)
     if(prev_saved_model != None):
         # model = model_builder(model_class, 
@@ -175,14 +202,16 @@ def execute_model(model_class, hyperparams,
                           momentum=config.momentum, weight_decay=config.weight_decay)
     
     #scheduler = StepLR(optimizer, step_size=config.sched_lr_step, gamma=config.sched_lr_gamma)
-    #scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=config.lr, steps_per_epoch=len(train_loader), epochs=config.epochs)
+    scheduler = CyclicLR(optimizer, base_lr=config.lr*0.01, max_lr=config.lr, mode='triangular', gamma=1.)#, scale_fn='triangular',step_size_up=200)
+
     #scheduler = MultiStepLR(optimizer, milestones=[10,20], gamma=config.sched_lr_gamma)
     # WandB â€“ wandb.watch() automatically fetches all layer dimensions, gradients, model parameters and logs them automatically to your dashboard.
     # Using log="all" log histograms of parameter values in addition to gradients
     wandb.watch(model, log="all")
 
     for epoch in range(1, config.epochs + 1):
-        epoch_train_acc,epoch_train_loss = train(config, model, device, train_loader, optimizer,criterion(), epoch)        
+        #epoch_train_acc,epoch_train_loss = train(config, model, device, train_loader, optimizer,criterion(), epoch)
+        epoch_train_acc,epoch_train_loss = train_cyclic_lr(config, model, device, train_loader, optimizer,scheduler, criterion(), epoch)   
         epoch_test_acc,epoch_test_loss = test(config, model, device, test_loader,criterion(reduction='sum'), classes,epoch)
 
         print('\nEpoch: {:.0f} Train set: Average loss: {:.4f}, Accuracy: {:.3f}%'.format(
@@ -202,8 +231,8 @@ def execute_model(model_class, hyperparams,
                    "Train Loss": epoch_train_loss, 
                    "Test Accuracy":epoch_test_acc, 
                    "Test Loss": epoch_test_loss,
-                   "Learning Rate": config.lr})
-                   #"Learning Rate": scheduler.get_lr()})
+                   #"Learning Rate": config.lr})
+                   "Learning Rate": scheduler.get_lr()})
         
         if(save_best == True and epoch_test_acc > best_acc):
             print("Model saved as Test Accuracy increased from ", best_acc, " to ", epoch_test_acc)
@@ -215,15 +244,9 @@ def execute_model(model_class, hyperparams,
                 }, model_path)
             best_acc = epoch_test_acc
 
-        #if (epoch > config.start_lr):
+        # if (epoch > config.start_lr):
         #    scheduler.step()
         
-    # WandB â€“ Save the model checkpoint. This automatically saves a file to the cloud and associates it with the current run.
-
-    # torch.save({
-    #         'model_state_dict': model.state_dict(),
-    #         'optimizer_state_dict': optimizer.state_dict()
-    #         }, model_path)
     print("Final model save path:",model_path," best Accuracy:",best_acc)
     wandb.save('model.h5')
     return model_path
