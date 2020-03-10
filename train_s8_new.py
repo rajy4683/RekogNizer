@@ -161,5 +161,3 @@ if __name__ == '__main__':
         hyperparams.print_hyperparams()
         main()
     #return
-
-        
