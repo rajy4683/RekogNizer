@@ -30,10 +30,14 @@ import json
 import torchvision.transforms as transforms
 import torchvision
 from albumentations import (
-    HorizontalFlip, Compose, RandomCrop, Cutout,Normalize, HorizontalFlip, Resize,RandomSizedCrop,
+    HorizontalFlip, Compose, RandomCrop, Cutout,Normalize, HorizontalFlip, 
+    Resize,RandomSizedCrop, MotionBlur
 )
 from albumentations.pytorch import ToTensor
 import numpy as np
+from RekogNizer import QuizDNN
+
+
 
 saved_model_path=None
 def main():
@@ -48,6 +52,7 @@ def main():
     patch_size=2
     transform_train = Compose([
     Cutout(num_holes=1,max_h_size=16,max_w_size=16,always_apply=True,p=1,fill_value=[0.4827*255, 0.4724*255, 0.4427*255]),
+    MotionBlur(blur_limit=7, always_apply=False, p=0.5),
     HorizontalFlip(p=1),
     Normalize(
         mean=[0.4914, 0.4826, 0.44653],
@@ -72,8 +77,8 @@ def main():
                                         download=True, transform=transform_test)
     testloader = dataloader.get_dataloader(testset, hyperparams.hyperparameter_defaults['batch_size'], shuffle=False, num_workers=2)
     
- 
-    optimizer=optim.SGD#(model.parameters(), lr=0.001, momentum=0.9)
+    #optim.AdamW
+    optimizer=optim.SGD #(model.parameters(), lr=0.001, momentum=0.9)
     criterion=nn.CrossEntropyLoss
 
     model_new = basemodelclass.ResNet18(hyperparams.hyperparameter_defaults['dropout'])
