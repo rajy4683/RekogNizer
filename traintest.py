@@ -7,6 +7,7 @@ from RekogNizer.fileutils import *
 import wandb
 from tqdm import tqdm
 from torchsummary import summary
+#from torchlars import LARS
 
 
 def model_builder(model_class=None, weights_path=None, local_device=torch.device("cpu")):
@@ -107,8 +108,11 @@ def train_cyclic_lr(args, model, device,
 
 
 def train(args, model, device, 
-          train_loader, optimizer, criterion,
-          epoch_number,l1_loss=False, l1_beta = 0):
+          train_loader, 
+          optimizer, scheduler,
+          criterion, epoch_number,
+          l1_loss=False, l1_beta = 0, 
+          batch_step=False):
     model.train()
     pbar = tqdm(train_loader)
     train_loss = 0
@@ -130,9 +134,16 @@ def train(args, model, device,
             loss += (l1_beta * reg_loss)
         loss.backward()
         optimizer.step()
+        ### Specifically for CyclicLR. TODO: Add isinstance check for scheduler as well.
+        if (batch_step == True and scheduler is not None):
+            scheduler.step()
         pbar.set_description(desc= f'loss={loss.item()} batch_id={batch_idx}')
         train_loss += loss.item()
     
+    ### For other LR schedulers
+    if(batch_step != True and epoch_number > args.start_lr and scheduler is not None):
+        scheduler.step()
+        
     train_accuracy = (100. * train_accuracy) / len(train_loader.dataset)
     train_loss /= len(train_loader.dataset)
     return train_accuracy, train_loss
@@ -163,7 +174,9 @@ def execute_model(model_class, hyperparams,
                   optimizer_in=optim.SGD,
                   criterion=nn.CrossEntropyLoss,
                   scheduler=None,prev_saved_model=None,
-                  save_best=False,**kwargs):
+                  save_best=False, batch_step=False, 
+                  lars_mode=False,
+                  **kwargs):
     hyperparams['run_name'] = rand_run_name()
     wandb.init(config=hyperparams, project=hyperparams['project'])
     
@@ -201,8 +214,15 @@ def execute_model(model_class, hyperparams,
     optimizer = optimizer_in(model.parameters(), lr=config.lr,
                           momentum=config.momentum, weight_decay=config.weight_decay)
     
+    ### We will skip LR-scheduler when using LARS because of unknown interactions
+    #if(lars_mode == True):
+        #optimizer = LARS(optimizer=base_optimizer, eps=1e-8, trust_coef=0.001)
+    #optimizer = LARS(optimizer=optimizer, eps=0.6, trust_coef=0.001)
+    #else:
+    scheduler = CyclicLR(optimizer, base_lr=config.lr*0.01, max_lr=config.lr, mode='triangular', gamma=1.,step_size_up=1000)#, scale_fn='triangular',step_size_up=200)    
+
     #scheduler = StepLR(optimizer, step_size=config.sched_lr_step, gamma=config.sched_lr_gamma)
-    scheduler = CyclicLR(optimizer, base_lr=config.lr*0.01, max_lr=config.lr, mode='triangular', gamma=1.)#, scale_fn='triangular',step_size_up=200)
+    
 
     #scheduler = MultiStepLR(optimizer, milestones=[10,20], gamma=config.sched_lr_gamma)
     # WandB â€“ wandb.watch() automatically fetches all layer dimensions, gradients, model parameters and logs them automatically to your dashboard.
@@ -211,8 +231,15 @@ def execute_model(model_class, hyperparams,
 
     for epoch in range(1, config.epochs + 1):
         #epoch_train_acc,epoch_train_loss = train(config, model, device, train_loader, optimizer,criterion(), epoch)
-        epoch_train_acc,epoch_train_loss = train_cyclic_lr(config, model, device, train_loader, optimizer,scheduler, criterion(), epoch)   
-        epoch_test_acc,epoch_test_loss = test(config, model, device, test_loader,criterion(reduction='sum'), classes,epoch)
+
+        epoch_train_acc,epoch_train_loss = train(config, model, device, 
+                                                train_loader, optimizer,scheduler, 
+                                                criterion(), epoch,
+                                                batch_step=batch_step)   
+        epoch_test_acc,epoch_test_loss = test(config, model, 
+                                                device, test_loader,
+                                                criterion(reduction='sum'), 
+                                                classes,epoch)
 
         print('\nEpoch: {:.0f} Train set: Average loss: {:.4f}, Accuracy: {:.3f}%'.format(
         epoch, epoch_train_loss, epoch_train_acc))
