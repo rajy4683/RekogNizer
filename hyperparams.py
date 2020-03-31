@@ -7,13 +7,15 @@ hyperparameter_defaults = dict(
     momentum = 0.9,
     no_cuda = False,
     seed = 1,
-    epochs = 45,
+    epochs = 50,
     bias = False,
     sched_lr_gamma = 0.5,
     sched_lr_step= 1,
     start_lr = 0,
     weight_decay=0.0000,
-    project="news5"
+    lr_decay_threshold=0.0,
+    factor=0.0,
+    project="news5",
     )
 
 def print_hyperparams():
@@ -23,5 +25,6 @@ def print_hyperparams():
 def get_hyperparam(key_item):
     return hyperparameter_defaults[key_item]
 
-def set_hyperparam(key_item,val_item):
-    hyperparameter_defaults[key_item] = val_item
+def set_hyperparam(params_dict):
+    for key_item, val_item in params_dict.items(): 
+        hyperparameter_defaults[key_item] = val_item
