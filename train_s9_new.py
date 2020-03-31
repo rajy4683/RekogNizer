@@ -35,59 +35,55 @@ from albumentations import (
 )
 from albumentations.pytorch import ToTensor
 import numpy as np
-from RekogNizer import QuizDNN
-
+from RekogNizer import lrfinder
+from torch.optim.lr_scheduler import StepLR, OneCycleLR, MultiStepLR, CyclicLR, ReduceLROnPlateau
+import wandb
 
 
 saved_model_path=None
 def main():
     device = torch.device("cuda" if not hyperparams.hyperparameter_defaults['no_cuda'] else "cpu")
 
-    fileutils.rand_run_name()
-
+    
+    hyperparams.hyperparameter_defaults['run_name'] = fileutils.rand_run_name()
+    trainloader, testloader = dataloader.get_train_test_dataloader_cifar10()
 
     print("Initializing datasets and dataloaders")
-
-    torch.manual_seed(hyperparams.hyperparameter_defaults['seed'])
-    patch_size=2
-    transform_train = Compose([
-    Cutout(num_holes=1,max_h_size=16,max_w_size=16,always_apply=True,p=1,fill_value=[0.4827*255, 0.4724*255, 0.4427*255]),
-    MotionBlur(blur_limit=7, always_apply=False, p=0.5),
-    HorizontalFlip(p=1),
-    Normalize(
-        mean=[0.4914, 0.4826, 0.44653],
-        std=[0.24703, 0.24349, 0.26519],
-        ),
-    ToTensor()
-    ])
-
-    transform_test = Compose([
-    Normalize(
-        mean=[0.4914, 0.4826, 0.44653],
-        std=[0.24703, 0.24349, 0.26519],
-    ),
-    ToTensor()
-    ])
-
-    trainset = dataloader.CIFAR10(root='./data', train=True,
-                                            download=True, transform=transform_train)
-    trainloader = dataloader.get_dataloader(trainset, hyperparams.hyperparameter_defaults['batch_size'], shuffle=True, num_workers=2)
-    
-    testset = dataloader.CIFAR10(root='./data', train=False,
-                                        download=True, transform=transform_test)
-    testloader = dataloader.get_dataloader(testset, hyperparams.hyperparameter_defaults['batch_size'], shuffle=False, num_workers=2)
-    
-    #optim.AdamW
-    optimizer=optim.SGD #(model.parameters(), lr=0.001, momentum=0.9)
-    criterion=nn.CrossEntropyLoss
-
     model_new = basemodelclass.ResNet18(hyperparams.hyperparameter_defaults['dropout'])
-    final_model_path = traintest.execute_model(model_new, hyperparams.hyperparameter_defaults, 
+    wandb_run_init = wandb.init(config=hyperparams.hyperparameter_defaults, project=hyperparams.hyperparameter_defaults['project'])
+    wandb.watch_called = False
+    config = wandb.config
+    print(config)
+    wandb.watch(model_new, log="all")
+
+    trainloader, testloader = dataloader.get_train_test_dataloader_cifar10()
+    optimizer=optim.SGD(model_new.parameters(), lr=config.lr,momentum=config.momentum,
+                         weight_decay=config.weight_decay)
+    
+    #optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
+    criterion=nn.CrossEntropyLoss
+    #scheduler = None
+    
+    #scheduler = CyclicLR(optimizer, base_lr=config.lr*0.01, max_lr=config.lr, mode='triangular', gamma=1.)
+                 #, cycle_momentum=False)#,step_size_up=1000)#, scale_fn='triangular',step_size_up=200)
+    #scheduler = StepLR(optimizer, step_size=config.sched_lr_step, gamma=config.sched_lr_gamma)  
+    #scheduler = MultiStepLR(optimizer, milestones=[10,20], gamma=config.sched_lr_gamma)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=2, verbose=True, threshold=0.0001)
+    #scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=config.factor, patience=4, verbose=True, threshold=config.lr_decay_threshold)
+
+
+    final_model_path = traintest.execute_model(model_new, 
+                hyperparams.hyperparameter_defaults, 
                 trainloader, testloader, 
                 device, dataloader.classes,
-                optimizer=optimizer,
+                wandb=wandb,
+                optimizer_in=optimizer,
+                scheduler=scheduler,
                 prev_saved_model=saved_model_path,
-                criterion=criterion,save_best=True,lars_mode=False,batch_step=True)
+                criterion=criterion,
+                save_best=True,
+                lars_mode=False,
+                batch_step=False)
 
 
 if __name__ == '__main__':
