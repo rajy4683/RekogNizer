@@ -11,6 +11,17 @@ import matplotlib.pyplot as plt
 import torch
 import torchvision
 from RekogNizer.hyperparams import *
+#from RekogNizer import 
+
+
+def show_sample_images(images, labels, classes, max_count=25):
+    print(images.shape, torch.mean(images,[0,2,3]),torch.std(images,[0,2,3]))
+    fig = plt.figure(figsize=(10,10))
+    for idx in np.arange(max_count):
+        ax = fig.add_subplot(5, 5, idx+1, xticks=[], yticks=[])
+        plt.imshow(np.transpose(images[idx].cpu().numpy(), (1, 2, 0)))
+        ax.set(xlabel="Actual="+classes[labels[idx].cpu().numpy()])
+
 
 def rand_run_name():
     ran = random.randrange(10**80)
@@ -26,12 +37,33 @@ def generate_model_save_path(base="/content/drive/My Drive/EVA4/model_saves",ran
     return os.path.join(base,file_name)
 
 # functions to show an image
-def imshow(img,labels):
+def imshow_labels(img,labels):
     img = img / 2 + 0.5     # unnormalize
     npimg = img.numpy()
     fig = plt.figure(figsize=(10,10))
     #plt.figsize = (10,20)
     plt.imshow(np.transpose(npimg, (1, 2, 0)))
+
+# functions to show an image
+def imshow(img,labels):
+    img = img / 2 + 0.5     # unnormalize
+    npimg = img.numpy()
+    #print(npimg.shape)
+    fig = plt.figure(figsize=(10,10))
+    #plt.figsize = (10,20)
+    plt.imshow(np.transpose(npimg, (1, 2, 0)))
+
+# get some random training images
+def get_image_samples(imageloader, classes,count=32):
+    torch.manual_seed(hyperparameter_defaults['seed'])
+    dataiter = iter(imageloader)
+    images, labels = dataiter.next()
+    # show images
+    print(images.shape, torch.mean(images,[0,2,3]),torch.std(images,[0,2,3]))
+    imshow(torchvision.utils.make_grid(images[:count], nrow=8),labels[:count])
+    # print labels
+    print(' '.join('%5s' % classes[labels[j]] for j in range(count)))
+
 
 
 # get some random training images
@@ -40,6 +72,7 @@ def get_image_samples(imageloader, classes,count=32):
     dataiter = iter(imageloader)
     images, labels = dataiter.next()
     # show images
+    print(images.shape, torch.mean(images,[0,2,3]),torch.std(images,[0,2,3]))
     imshow(torchvision.utils.make_grid(images[:count], nrow=8),labels[:count])
     # print labels
     print(' '.join('%5s' % classes[labels[j]] for j in range(count)))
