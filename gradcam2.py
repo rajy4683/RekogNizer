@@ -6,13 +6,18 @@ from torchvision.utils import make_grid, save_image
 import torch.nn.functional as F
 from matplotlib import pyplot as plt
 
-### Modified version of https://github.com/1Konny/gradcam_plus_plus-pytorch
+""" Expects equal length arrays for images, predicted labels and actual labels """
+def visualize_images(model_dict, image_arr, actual_label_arr, pred_label_arr, mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]):
+    for elem in zip(image_arr, actual_label_arr, pred_label_arr):
+        visualize_gradcam_image(model_dict,elem[0], elem[1], elem[2], mean=mean, std=std)  
 
-def visualize_gradcam_image(resnet_model_dict, image, mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]):
+
+def visualize_gradcam_image(resnet_model_dict, image,  actual_label, pred_label, mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]):
     normalizer = Normalize(mean=mean, std=std)
-    torch_img = torch.from_numpy(np.asarray(image)).reshape((1,3,32,32))
+    torch_img = torch.from_numpy(np.asarray(image.cpu())).reshape((1,3,32,32))
 
     normed_torch_img = normalizer(torch_img)
+    #normed_torch_img = torch_img
     resnet_gradcam = GradCAM(resnet_model_dict, True)
 
     new_images = []
@@ -22,8 +27,12 @@ def visualize_gradcam_image(resnet_model_dict, image, mean=[0.5, 0.5, 0.5], std=
     new_images = make_grid(torch.cat(new_images, 0), nrow=5)
 
     npimg = new_images.numpy()
-    fig = plt.figure(figsize=(10,10))
-    plt.imshow(np.transpose(npimg, (1, 2, 0)))
+    return npimg
+    #fig = plt.figure(figsize=(10,10))
+    #plt.imshow(np.transpose(npimg, (1, 2, 0)))
+    #plt.xlabel('Actual='+actual_label, fontsize=18)
+    #plt.ylabel('Pred='+pred_label, fontsize=16)
+    #plt.imshow(npimg)
 
 def visualize_cam(mask, img):
     """Make heatmap from mask and synthesize GradCAM result image using heatmap and img.
