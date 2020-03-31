@@ -1,15 +1,19 @@
 import torch
 import torchvision
 import torchvision.transforms as transforms
-from RekogNizer.hyperparams import *
+from RekogNizer import hyperparams
 
-from albumentations import Compose, RandomCrop, Normalize, HorizontalFlip, Resize
+from albumentations import Compose, RandomCrop, Normalize, HorizontalFlip, Resize, Cutout, MotionBlur
+from albumentations import (
+    HorizontalFlip, Compose, RandomCrop, Cutout,Normalize, HorizontalFlip, RandomBrightnessContrast,
+    Resize,RandomSizedCrop, MotionBlur,MultiplicativeNoise,InvertImg,
+)
 from albumentations.pytorch import ToTensor
 import random
 
 from torchvision.datasets.vision import VisionDataset
 from torchvision.datasets.utils import check_integrity, download_and_extract_archive
-
+import os
 import sys
 import numpy as np
 
@@ -19,11 +23,13 @@ else:
     import pickle
 
 
+
+
 classes = ('plane', 'car', 'bird', 'cat',
            'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
 
-class CIFAR10(VisionDataset):
+class MyCIFAR10(VisionDataset):
     """`CIFAR10 <https://www.cs.toronto.edu/~kriz/cifar.html>`_ Dataset.
     Args:
         root (string): Root directory of dataset where directory
@@ -62,7 +68,7 @@ class CIFAR10(VisionDataset):
     def __init__(self, root, train=True, transform=None, target_transform=None,
                  download=False):
 
-        super(CIFAR10, self).__init__(root, transform=transform,
+        super(MyCIFAR10, self).__init__(root, transform=transform,
                                       target_transform=target_transform)
 
         self.train = train  # training set or test set
@@ -157,7 +163,57 @@ class CIFAR10(VisionDataset):
         return "Split: {}".format("Train" if self.train is True else "Test")
 
 
-
+## Dummy wrapper around 
 def get_dataloader(dataset, batch_size, shuffle=True, num_workers=2):
     return torch.utils.data.DataLoader(dataset, batch_size,
                                          shuffle=shuffle, num_workers=num_workers)
+
+def get_default_transforms_cifar10():
+    torch.manual_seed(hyperparams.hyperparameter_defaults['seed'])
+    patch_size=2
+    transform_train = Compose([
+    #Cutout(num_holes=1,max_h_size=16,max_w_size=16,always_apply=True,p=1,fill_value=[0.5268*255, 0.5267*255, 0.5328*255]),
+    Cutout(num_holes=1,max_h_size=16,max_w_size=16,always_apply=True,p=1,fill_value=[0.4819*255, 0.4713*255, 0.4409*255]),
+    MotionBlur(blur_limit=7, always_apply=True, p=1),
+    RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, always_apply=True, p=1),
+    #MultiplicativeNoise(multiplier=1.5, p=1),
+    #InvertImg(p=0.5),
+    #HorizontalFlip(p=1),
+    Normalize(
+       mean=[0.4914, 0.4826, 0.44653],
+       std=[0.24703, 0.24349, 0.26519],
+       ),
+    # Normalize(
+    #    mean=[0.5268, 0.5267, 0.5328],
+    #    std=[0.3485, 0.3444, 0.3447],
+    #    ),
+    
+    ToTensor()
+    ])
+
+    transform_test = Compose([
+    Normalize(
+        mean=[0.4914, 0.4826, 0.44653],
+        std=[0.24703, 0.24349, 0.26519],
+    ),
+    ToTensor()
+    ])
+    return transform_train, transform_test
+
+def get_train_test_dataloader_cifar10(transform_train=None, transform_test=None):
+    torch.manual_seed(hyperparams.hyperparameter_defaults['seed'])
+    
+    transform_train_def, transform_test_def = get_default_transforms_cifar10()
+    if (transform_train is None):
+        transform_train = transform_train_def
+    if (transform_test is None):
+        transform_test = transform_test_def
+    
+    trainset = MyCIFAR10(root='./data', train=True, download=True, transform=transform_train)
+    trainloader = get_dataloader(trainset, hyperparams.hyperparameter_defaults['batch_size'], shuffle=True, num_workers=2)
+    testset = MyCIFAR10(root='./data', train=False, download=True, transform=transform_test)
+    testloader = get_dataloader(testset, hyperparams.hyperparameter_defaults['batch_size'], shuffle=False, num_workers=2)
+    return trainloader, testloader
+
+
+    
