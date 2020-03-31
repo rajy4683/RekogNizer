@@ -1,5 +1,5 @@
 """
-     All model class definitions ued in RekogNizer
+     All model class definitions for MNIST
 """
 
 from __future__ import print_function
@@ -322,8 +322,8 @@ class BasicBlock(nn.Module):
         self.dropout_layer = nn.Dropout(self.dropout_val)
 
     def forward(self, x):
-        out = self.dropout_layer(F.relu(self.bn1(self.conv1(x))))
-        out = self.dropout_layer(self.bn2(self.conv2(out)))
+        out = F.relu(self.bn1(self.conv1(x)))#self.dropout_layer(F.relu(self.bn1(self.conv1(x))))
+        out = self.bn2(self.conv2(out))#self.dropout_layer(self.bn2(self.conv2(out)))
         out += self.shortcut(x)
         out = F.relu(out)
         return out
