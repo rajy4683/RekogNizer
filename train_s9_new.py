@@ -68,7 +68,8 @@ def main():
                  #, cycle_momentum=False)#,step_size_up=1000)#, scale_fn='triangular',step_size_up=200)
     #scheduler = StepLR(optimizer, step_size=config.sched_lr_step, gamma=config.sched_lr_gamma)  
     #scheduler = MultiStepLR(optimizer, milestones=[10,20], gamma=config.sched_lr_gamma)
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=2, verbose=True, threshold=0.0001)
+    #scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=2, verbose=True, threshold=0.0001)
+    scheduler = traintest.MyOwnReduceLROnPlateau(optimizer, mode='min', factor=0.2, patience=2, verbose=True, threshold=0.0001)
     #scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=config.factor, patience=4, verbose=True, threshold=config.lr_decay_threshold)
 
 
