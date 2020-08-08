@@ -6,7 +6,8 @@ from RekogNizer import hyperparams
 from albumentations import Compose, RandomCrop, Normalize, HorizontalFlip, Resize, Cutout, MotionBlur
 from albumentations import (
     HorizontalFlip, Compose, RandomCrop, Cutout,Normalize, HorizontalFlip, RandomBrightnessContrast,
-    Resize,RandomSizedCrop, MotionBlur,MultiplicativeNoise,InvertImg,
+    Resize,RandomSizedCrop, MotionBlur,InvertImg, IAAFliplr,
+	IAAPerspective,
 )
 from albumentations.pytorch import ToTensor
 import random
@@ -16,6 +17,11 @@ from torchvision.datasets.utils import check_integrity, download_and_extract_arc
 import os
 import sys
 import numpy as np
+import pandas as pd
+from torchvision import datasets
+from RekogNizer import imgnetloader
+from torch.utils.data import Dataset
+from PIL import Image
 
 if sys.version_info[0] == 2:
     import cPickle as pickle
@@ -25,8 +31,128 @@ else:
 
 
 
+"""
+    Dataset class for the DepthDataSet.
+    It consists of following images:
+    1. Images with Only Background E.g: Malls, classrooms, college_outdoors, lobbies etc (bg_image) Resolution: 250x250
+    2. Images with an object/person overlayed randomly on a Background (fg_bg_images). Resolution: 250x250
+    3. Ground truth of Masked Images of foregroud object/person (mask_images) Resolution: 250x250
+    4. Ground truth of Depth Map generated from fg_bg_images. (depth_images) Resolution: 320x240 
+    
+    The CSV file for the DataSet (DepthMapDataSet.csv) contains following columns:
+    "ImageName"      : fg_bg_image    
+    "MaskName"       : mask_image
+    "Depthname",     : depth_image
+    "BGImageName"    : bg_image
+    "BaseImageFName" : Zip file containing fg_bg_images and mask_images
+    "DepthImageFName": Zip file containing depth_images
+    "BGType"         : Class to which the bg_image belongs
+    "BGImageFName"   : Zip file containing bg_images
+
+    Total Count of entries in DepthMapDataSet.csv = 483820
+
+    Following additional CSVs are provided:Randomized Training and Test CSVs are provided:
+    1. DepthMapDataSetTest.csv: Randomized Test Samples (30%)
+    2. DepthMapDataSetTrain.csv: Randomized Training Samples (70%)
+    3. DepthMapDataSetSample.csv: Randomized 500 samples
+
+    ImageType,      Count,      Dimension,  Channel Space,  ChannelWise Mean,                    ChannelWise StdDev
+    fg_bg_images,   484320,     250x250x3,  RGB,           [0.56632738, 0.51567622, 0.45670792]  [0.1076622,  0.10650349, 0.12808967]
+    bg_images,      484320,     250x250x3,  RGB,           [0.57469445, 0.52241555, 0.45992244]  [0.11322354, 0.11195428, 0.13441683]
+    mask_images,    484320,     250x250x3,  RGB,           [0.05795104, 0.05795104, 0.05795104]  [0.02640032, 0.02640032, 0.02640032]
+    depth_images,   484320,     320x240x3,  RGB,           [0.61635181, 0.21432114, 0.50569604]  [0.09193359, 0.07619106, 0.04919082]
+
+
+"""
+
 classes = ('plane', 'car', 'bird', 'cat',
            'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+
+
+class DepthMaskDataSet(Dataset):
+    """Depth and Mask prediction Dataset.
+    """
+    def __init__(self, csv_file, 
+                root_dir, 
+                bg_image_path="/content/drive/My Drive/EVA4/tsai/S15EVA4/bg_images.zip",
+                transform=None, target_transform=None):
+        """
+        Args:
+            csv_file (string): Path to the csv file with depth_images, base_images, mask_images and respective zip files.
+            root_dir (string): Base dir containing main zip files for depth and image/mask zip files.
+            bg_image_path
+            transform : Optional transform to be applied on fg_bg_image and bg_image.
+            transform_target : Optional transform to be applied on mask_image and depth_image.
+        """
+        self.depthmask_csv = pd.read_csv(csv_file)
+        self.root_dir = root_dir
+        self.transform_base = transform
+        self.transform_target = target_transform
+        self.image_file_zip_dict = {val:ZipFile(os.path.join(self.root_dir,val)) 
+                                    for val in self.depthmask_csv['BaseImageFName'].unique()}
+        self.depth_zip_dict = {val:ZipFile(os.path.join(self.root_dir,val)) 
+                                    for val in self.depthmask_csv['DepthImageFName'].unique()}
+        
+        self.bg_image_zip_dict = ZipFile("/content/drive/My Drive/EVA4/tsai/S15EVA4/bg_images.zip")
+        # if transform:
+        #     self.transform_base = transform
+        #     #self.transform_mask = transform[1]
+        # if target_transform
+        #     self.transform_base = None
+        #     #self.transform_mask = None
+
+    def __len__(self):
+        return len(self.depthmask_csv)
+    """
+        Returns {
+            inputs:[overlayed_image, background_image], 
+            targets:[gt_depth_map, gt_mask]
+            }
+        Index(['ImageName', 'MaskName', 'Depthname', 'BGImageName', 'BaseImageFName',
+       'DepthImageFName', 'BGType']
+    """
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        base_img_name = self.depthmask_csv.iloc[idx, 0]
+        mask_img_name = self.depthmask_csv.iloc[idx, 1]
+        depth_img_name = self.depthmask_csv.iloc[idx, 2]
+        bg_image_name = self.depthmask_csv.iloc[idx, 3]
+        base_img_zip = self.image_file_zip_dict[self.depthmask_csv.iloc[idx, 4]]
+        #ZipFile(os.path.join(self.root_dir,
+        #                        self.depthmask_csv.iloc[idx, 4]))
+        depth_img_zip = self.depth_zip_dict[self.depthmask_csv.iloc[idx, 5]]
+        # ZipFile(os.path.join(self.root_dir,
+        #                         self.depthmask_csv.iloc[idx, 5]))
+        #print(base_img_name,mask_img_name,depth_img_name,bg_image_name )
+        #print(base_img_zip,depth_img_zip)
+        ### GT original inputs
+        try:
+            base_img = np.array(Image.open(BytesIO((base_img_zip.read(base_img_name)))))
+            bg_img = np.array(Image.open(BytesIO(self.bg_image_zip_dict.read(bg_image_name))))
+            
+            ### GT labels 
+            mask_img = np.array(Image.open(BytesIO((base_img_zip.read(mask_img_name)))))
+            depth_img = np.array(Image.open(BytesIO((depth_img_zip.read(depth_img_name)))))
+            
+            #return sample
+        except KeyError as key_err:
+            print(key_err)
+            return None
+
+        if self.transform_base:
+           base_img = self.transform_base(image=base_img)['image']
+           bg_img = self.transform_base(image=bg_img)['image']
+        if self.transform_target:
+           mask_img = self.transform_target(image=mask_img)['image']
+           depth_img = self.transform_base(image=depth_img)['image']
+
+           #mask_img =  self.transform_mask(mask_img)
+        #if self.transform_mask:
+        #   
+        sample = {'input':list([base_img, bg_img]), 'output':list([mask_img, depth_img]) }
+        return sample
 
 
 class MyCIFAR10(VisionDataset):
@@ -174,7 +300,8 @@ def get_default_transforms_cifar10():
     transform_train = Compose([
     #Cutout(num_holes=1,max_h_size=16,max_w_size=16,always_apply=True,p=1,fill_value=[0.5268*255, 0.5267*255, 0.5328*255]),
     Cutout(num_holes=1,max_h_size=16,max_w_size=16,always_apply=True,p=1,fill_value=[0.4819*255, 0.4713*255, 0.4409*255]),
-    MotionBlur(blur_limit=7, always_apply=True, p=1),
+    IAAFliplr(p=0.5),
+    #MotionBlur(blur_limit=7, always_apply=True, p=1),
     RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, always_apply=True, p=1),
     #MultiplicativeNoise(multiplier=1.5, p=1),
     #InvertImg(p=0.5),
@@ -200,6 +327,85 @@ def get_default_transforms_cifar10():
     ])
     return transform_train, transform_test
 
+"""
+    EVA4 S2 Dataset consists of 4 classes:
+        1. Large QuadCopters
+        2. Small QuadCopters
+        3. Winged Drones
+        4. Flying Birds
+"""
+
+class QDFDataSet(Dataset):
+    """Depth and Mask prediction Dataset.
+    """
+
+    def __init__(self, csv_file, root_dir="/content",
+                 transform=None):
+        """
+        Args:
+            csv_file (string): CSV file containing training/test data.
+            root_dir (string): Base dir containing ZipFiles for each class.
+            transform (tuple of callable, optional): Optional transform to be applied.
+        """
+        self.dataframe = pd.read_csv(csv_file)
+        self.root_dir = root_dir
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.dataframe)
+    """
+        Returns {
+            inputs:[overlayed_image, background_image], 
+            targets:[gt_depth_map, gt_mask]
+            }
+        Index(['FileName', 'DirName', 'Extn', 'Size', 'ClassName', 'Width', 'Height',
+       'Orientation'])
+    """
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        base_img_name = os.path.join(self.root_dir, self.dataframe.iloc[idx, 4], self.dataframe.iloc[idx, 0])
+        target_val = self.dataframe.iloc[idx, 12]
+           
+
+        
+        try:
+            base_img = np.array(Image.open(os.path.join(self.root_dir,base_img_name)).convert("RGB") )
+            ## base_img = np.array(Image.open(BytesIO((base_img_zip.read(base_img_name))))) ## For reading from ZipFile
+        except KeyError as key_err:
+            print(key_err)
+            return None
+        if self.transform:
+          output_base = self.transform(image=base_img)
+          base_img = output_base['image']
+  
+        return base_img, target_val
+
+
+
+
+def get_normalizer_transform(dataset_type,transforms_type):
+    if dataset_type == "imagenet":
+        return transforms_type.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    elif dataset_type == "cifar10":
+        return transforms_type.Normalize(mean=[0.4914, 0.4826, 0.44653], std=[0.24703, 0.24349, 0.26519])
+
+def get_minimal_transforms(dataset_type, transforms_type):
+    torch.manual_seed(hyperparams.hyperparameter_defaults['seed'])
+    norm_transform = get_normalizer_transform(dataset_type,transforms_type)
+    transform_train = transforms_type.Compose([
+        norm_transform,
+        transforms_type.ToTensor()
+    ])
+
+    transform_test = transforms_type.Compose([
+        norm_transform,
+        transforms_type.ToTensor()
+    ])
+    return transform_train, transform_test
+
+
 def get_train_test_dataloader_cifar10(transform_train=None, transform_test=None):
     torch.manual_seed(hyperparams.hyperparameter_defaults['seed'])
     
@@ -216,4 +422,37 @@ def get_train_test_dataloader_cifar10(transform_train=None, transform_test=None)
     return trainloader, testloader
 
 
+def get_imagenet_loaders(train_path, test_path, transform_train=None, transform_test=None):
+    torch.manual_seed(hyperparams.hyperparameter_defaults['seed'])
+    
+    train_transform = Compose([
+        
+        #Resize(32, 32, interpolation=1, always_apply=True, p=1),
+        Cutout(num_holes=1,max_h_size=8,max_w_size=8,always_apply=True,p=1,fill_value=[0.485*255, 0.456*255, 0.406*255]),
+        IAAFliplr(p=0.5),
+        #MotionBlur(blur_limit=7, always_apply=True, p=1),
+        RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, always_apply=True, p=1),
+		#IAAPerspective(scale=(0.05, 0.1), keep_size=True, always_apply=False, p=0.5),
+        Normalize(
+        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+        ),
+        ToTensor()
+    ])
+
+    test_transform = Compose([
+        #MotionBlur(blur_limit=7, always_apply=True, p=1),
+        #Resize(32, 32, interpolation=1, always_apply=True, p=1),
+        Normalize(
+        mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+        ),
+        ToTensor()
+    ])
+    train_data, test_data = imgnetloader.generate_timgnet_train_test_data("/content/t2/", 0.7, train_transform, test_transform )
+    print(train_data.transform, test_data.transform)
+
+    kwargs = {'num_workers': 2, 'pin_memory': True}
+    trainloader = torch.utils.data.DataLoader(train_data, batch_size=hyperparams.hyperparameter_defaults['batch_size'],shuffle=True,**kwargs)
+    testloader = torch.utils.data.DataLoader(test_data, batch_size=hyperparams.hyperparameter_defaults['batch_size'],shuffle=True,**kwargs)
+    
+    return trainloader, testloader
     

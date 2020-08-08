@@ -15,6 +15,8 @@ import torchvision
 from RekogNizer import lrfinder
 from torch.optim.optimizer import Optimizer
 from torch._six import inf
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
 
 class MyOwnReduceLROnPlateau(object):
     def __init__(self, optimizer, mode='min', factor=0.1, patience=10,
@@ -138,7 +140,30 @@ class MyOwnReduceLROnPlateau(object):
         self.__dict__.update(state_dict)
         self._init_is_better(mode=self.mode, threshold=self.threshold, threshold_mode=self.threshold_mode)
 
+def unnormalize(img_tensor, mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]):
+    st = torch.FloatTensor(std).view(3,1,1)
+    mt = torch.FloatTensor(mean).view(3,1,1)
+    img_unnorm = (img_tensor*st)+mt
+    return np.transpose(img_unnorm, (1, 2, 0))
 
+def show_misclassfied_images_classwise(model, imageloader, classes):
+    epoch_test_acc,epoch_test_loss,error_images, preds, actuals = plot_misclassified(None, 
+                                                                    model.to(torch.device("cuda")), 
+                                                                    torch.device("cuda"), 
+                                                                    imageloader, 
+                                                                    classes,1)
+    print(epoch_test_acc,epoch_test_loss)
+    #fileutils.show_sample_images(error_images, labels, dataloader.classes)
+
+
+    for class_idx in range(len(classes)):
+        fig = plt.figure(figsize=(30,30))
+        for idx,pos in enumerate(np.where(actuals == class_idx)[0][:10]):
+            ax = fig.add_subplot(1, 10, idx+1, xticks=[], yticks=[])
+            #plt.imshow(np.transpose(error_images[pos].cpu().numpy(), (1, 2, 0)))
+            plt.imshow(unnormalize(error_images[pos].cpu()))
+            ax.set(ylabel="Pred="+classes[np.int(preds[pos])], xlabel="Actual="+classes[np.int(actuals[pos])])
+    return error_images, preds, actuals
 
 
 
@@ -152,15 +177,19 @@ def show_misclassfied_images(model, imageloader, classes):
     #fileutils.show_sample_images(error_images, labels, dataloader.classes)
 
 
-    fig = plt.figure(figsize=(10,10))
+    fig = plt.figure(figsize=(20,20))
     for idx in np.arange(25):
         ax = fig.add_subplot(5, 5, idx+1, xticks=[], yticks=[])
-        plt.imshow(np.transpose(error_images[idx].cpu().numpy(), (1, 2, 0)))
+        #plt.imshow(np.transpose(error_images[idx].cpu().numpy(), (1, 2, 0)))
+        plt.imshow(unnormalize(error_images[idx].cpu()))
         ax.set(ylabel="Pred="+classes[np.int(preds[idx])], xlabel="Actual="+classes[np.int(actuals[idx])])
     return error_images, preds, actuals
 
 
-def find_lr_type2(model, optimizer, criterion, trainloader, testloader, seed=1, start_lr=0.0001, end_lr=100, step_mode="exp"):
+def return_traced_model(model, input_size):
+    return torch.jit.trace(model, input_size)
+
+def find_lr_type2(model, optimizer, criterion, trainloader, testloader, seed=1, start_lr=0.0001, end_lr=100, step_mode="exp",num_iter=500):
     torch.manual_seed(1)
     lr_finder = lrfinder.LRFinder(model, optimizer, criterion, device="cuda")
     #lr_finder.range_test(imageloader, end_lr=100, num_iter=500, step_mode="exp")
@@ -172,11 +201,12 @@ def find_lr_type2(model, optimizer, criterion, trainloader, testloader, seed=1, 
     print("Min loss:{} Min LR:{} Max LR:{}".format(min_loss, min_lr, max_lr))
     lr_finder.plot()
     lr_finder.reset()
+    return lr_finder
 
-def find_lr_type1(model, optimizer, criterion, imageloader, seed=1, start_lr=0.0001, end_lr=100, step_mode="exp"):
+def find_lr_type1(model, optimizer, criterion, imageloader, testloader=None, seed=1, start_lr=0.0001, end_lr=100, step_mode="exp",num_iter=500):
     torch.manual_seed(1)
     lr_finder = lrfinder.LRFinder(model, optimizer, criterion, device="cuda")
-    lr_finder.range_test(imageloader, end_lr=100, num_iter=500, step_mode="exp")
+    lr_finder.range_test(imageloader, val_loader=testloader, start_lr=start_lr, end_lr=end_lr, num_iter=num_iter, step_mode="exp")
     min_loss = np.min(lr_finder.history['loss'])
     min_lr = lr_finder.history['lr'][np.argmin(lr_finder.history['loss'])]
     max_lr = np.max(lr_finder.history['lr'])
@@ -185,7 +215,7 @@ def find_lr_type1(model, optimizer, criterion, imageloader, seed=1, start_lr=0.0
     lr_finder.plot()
     lr_finder.reset()
 
-    return min_loss, min_lr, max_lr
+    return lr_finder
 
 def model_builder(model_class=None, weights_path=None, local_device=torch.device("cpu")):
     if (model_class == None):
@@ -217,6 +247,51 @@ def model_builder2(model_class=None, weights_path=None, local_device=torch.devic
     except:
         print("Some execption occured during loading the model")
     return local_model.to(local_device),best_acc
+
+def get_classacc_conf_matrix(model, image_loader, classes, device=torch.device("cpu")):
+    #basemodelclass.CIFARModelDepthDilate()
+    class_correct = list(0. for i in range(len(classes)))
+    class_total = list(0. for i in range(len(classes)))
+    class_acc_map = {}
+    #model=model.to(device)
+    y_true = []
+    y_pred = []
+    with torch.no_grad():
+        for images, labels in image_loader:
+            y_true.extend(labels.numpy())
+            try:
+                images, labels = images.to(device), labels.to(device)
+                outputs = model(images)
+                _, predicted = torch.max(outputs, 1)
+                c = (predicted == labels).squeeze()
+                #print(count(c))
+                #print(c)
+                for i in range(images.shape[0]):
+                    label = labels[i]
+                    class_correct[label] += c[i].item()
+                    class_total[label] += 1
+                y_pred.extend(predicted.to("cpu").numpy())
+            except:
+                print("Exception:",predicted, labels)
+                continue
+    
+    for i in range(len(classes)):
+        class_accuracy = 100 * class_correct[i] / class_total[i]
+        print('Accuracy of %5s : %2d %%' % (classes[i], class_accuracy))
+        class_acc_map[classes[i]]=class_accuracy
+    
+    if(len(y_true) != len(y_pred)):
+        print("Predicted:{} vs Actual:{} counts mismatch".format(len(y_pred),len(y_true)))
+        min_len = min(len(y_true), len(y_pred))
+        y_true = y_true[:min_len]
+        y_pred = y_pred[:min_len]
+        
+    conf_matrix = confusion_matrix(y_true, y_pred)
+    ax = sns.heatmap(conf_matrix,annot=True,fmt='d',cmap='Blues')
+    ax.set_xticklabels(classes)
+    ax.set_yticklabels(classes)
+    
+    return class_acc_map, conf_matrix
 
 
 
@@ -325,18 +400,39 @@ def plot_misclassified(args, model, device, test_loader,classes,epoch_number):
     print(preds.shape)
 
     fig = plt.figure(figsize=(10,10))
-    #fileutils.imshow(torchvision.utils.make_grid(error_images[:25], nrow=5),preds[:25])
-
-
-    # for idx in np.arange(25):
-    #     ax = fig.add_subplot(5, 5, idx+1, xticks=[], yticks=[])
-    #     plt.imshow(np.transpose(error_images[idx].cpu().numpy(), (1, 2, 0)))
-    #     #ax.set_title("Pred="+str(np.int(preds[idx])))
-    #     #ax.set(ylabel="Pred="+str(np.int(preds[idx])), xlabel="Actual="+str(np.int(actuals[idx])))
-    #     ax.set(ylabel="Pred="+classes[np.int(preds[idx])], xlabel="Actual="+classes[np.int(actuals[idx])])
 
     return test_accuracy, test_loss, error_images, preds, actuals #error_images#, data(np.where(orig_labels != pred_labels))
         
+
+"""
+    Training loop for Mono MaskDepth
+"""
+def train_monomaskdepth(model, 
+          device, 
+          train_loader, 
+          optimizer,           
+          criterion=nn.MSELoss(),
+          ):
+    model.train()
+    pbar = tqdm(train_loader)
+    train_loss = 0
+    #train_accuracy = nn.MSELoss()
+    for batch_idx, dataset in enumerate(pbar):
+        data = dataset['input'].to(device)
+        gt_mask = dataset['output'][0].to(device) ### Ground truth for mask
+        gt_depth = dataset['output'][1].to(device) ### Ground truth for depth
+        optimizer.zero_grad()
+        pred_mask, pred_depth = torch.split(model(data), 3,dim=1) ### Model will output in form of (6, h, w)
+        # get the index of the max log-probability
+        #train_accuracy += pred.eq(target.view_as(pred)).sum().item()
+
+        loss = (torch.sqrt(criterion(gt_mask, pred_mask)) + torch.sqrt(criterion(gt_depth, pred_depth)))/2
+        loss.backward()
+        optimizer.step()
+        pbar.set_description(desc= f'loss={loss.item()} batch_id={batch_idx}')
+        train_loss += loss.item()
+
+    return (train_loss/batch_idx)
 
 
 def train(args, model, device, 
@@ -377,7 +473,7 @@ def train(args, model, device,
     #    scheduler.step(train_loss)
         
     train_accuracy = (100. * train_accuracy) / len(train_loader.dataset)
-    train_loss /= len(train_loader.dataset)
+    train_loss /= len(train_loader)
     return train_accuracy, train_loss
 
 def test(args, model, device, test_loader, criterion, classes,epoch_number):
@@ -445,7 +541,7 @@ def execute_model(model_class, hyperparams,
         #model = model_class(config.dropout).to(device)
         model = model_class.to(device)
     
-    summary(model.to(device),input_size=(3, 32, 32))
+    summary(model.to(device),input_size=(3, 224, 224))
     optimizer = optimizer_in#(model.parameters(), lr=config.lr,momentum=config.momentum,
                            #weight_decay=config.weight_decay) #
     
@@ -476,9 +572,9 @@ def execute_model(model_class, hyperparams,
                                                 device, test_loader,
                                                 criterion(reduction='sum'), 
                                                 classes,epoch)
-
-        print('\nEpoch: {:.0f} Train set: Average loss: {:.4f}, Accuracy: {:.3f}%'.format(
-        epoch, epoch_train_loss, epoch_train_acc))
+        last_lr = 0#scheduler.get_last_lr()[0]
+        print('\nEpoch: {:.0f} Train set: Average loss: {:.4f}, Accuracy: {:.3f}%, lr:{}'.format(
+        epoch, epoch_train_loss, epoch_train_acc,last_lr))
         print('Epoch: {:.0f} Test set: Average loss: {:.4f}, Accuracy: {:.3f}%'.format(
         epoch, epoch_test_loss, epoch_test_acc))
         #myoptim = optimizer.state_dict()['param_groups'][0]
@@ -494,8 +590,8 @@ def execute_model(model_class, hyperparams,
                    "Train Loss": epoch_train_loss, 
                    "Test Accuracy":epoch_test_acc, 
                    "Test Loss": epoch_test_loss,
-                   "Learning Rate": config.lr})
-                   #"Learning Rate": scheduler.get_lr()})
+                   #"Learning Rate": config.lr})
+                   "Learning Rate": last_lr})
         
         if(save_best == True and epoch_test_acc > best_acc):
             print("Model saved as Test Accuracy increased from ", best_acc, " to ", epoch_test_acc)
@@ -507,7 +603,10 @@ def execute_model(model_class, hyperparams,
                 }, model_path)
             best_acc = epoch_test_acc
 
-        if (epoch > config.start_lr):
+        if (scheduler != None and 
+            epoch > config.start_lr and 
+            batch_step == False):
+            print("Non CyclicLR Case")
             scheduler.step(epoch_test_loss)
         
     print("Final model save path:",model_path," best Accuracy:",best_acc)

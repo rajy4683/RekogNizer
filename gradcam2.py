@@ -14,7 +14,8 @@ def visualize_images(model_dict, image_arr, actual_label_arr, pred_label_arr, me
 
 def visualize_gradcam_image(resnet_model_dict, image,  actual_label, pred_label, mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]):
     normalizer = Normalize(mean=mean, std=std)
-    torch_img = torch.from_numpy(np.asarray(image.cpu())).reshape((1,3,32,32))
+    #torch_img = torch.from_numpy(np.asarray(image.cpu())).reshape((1,3,32,32))
+    torch_img = torch.from_numpy(np.asarray(image.cpu())).reshape((1,3,64,64))
 
     normed_torch_img = normalizer(torch_img)
     #normed_torch_img = torch_img

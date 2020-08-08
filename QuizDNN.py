@@ -17,6 +17,7 @@ class S9QuizDNN(nn.Module):
         self.dropout_val = dropout
         self.bias = False
         self.conv1 = nn.Conv2d(3, 64, kernel_size=1, stride=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
         self.conv2 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(64)
         self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1, bias=False)
@@ -42,14 +43,13 @@ class S9QuizDNN(nn.Module):
 
         self.gap_linear = nn.Sequential(
             nn.AdaptiveAvgPool2d((1,1)),
-            #nn.Linear(128, 10)
             nn.Conv2d(64, 10, 1, bias=self.bias)
         )
 
     def forward(self, x):
-        x1 = self.conv1(x)
+        x1 = F.relu(self.bn1(self.conv1(x)))
         x2 = F.relu(self.bn2(self.conv2(x)))
-        x3 = F.relu(self.bn2(self.conv3(x2+x1)))
+        x3 = F.relu(self.bn3(self.conv3(x2+x1)))
         x3 = self.pool4(x3) ### 1st Pooled layer = x3 (same as x4) in the assignment
 
         x5 = F.relu(self.bn5(self.conv5(x3)))
