@@ -1,4 +1,6 @@
 # RekogNizer
+## Update ---> Currently under refactoring...
+
 A new module for building easy to use and ready to deploy models
 ### **[RekogNizer library](https://github.com/rajy4683/RekogNizer.git) contains the following files:**
 ```
